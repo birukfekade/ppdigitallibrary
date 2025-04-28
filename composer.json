@@ -11,8 +11,6 @@
         "laravel/sanctum": "^4.1",
         "laravel/tinker": "^2.9",
         "laravel/ui": "^4.6",
-        "setasign/fpdi": "^2.6",
-        "setasign/fpdi-tcpdf": "^2.3",
         "tecnickcom/tcpdf": "^6.9"
     },
     "require-dev": {

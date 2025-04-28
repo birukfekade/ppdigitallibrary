@@ -1,5 +1,6 @@
 @extends('layouts.admin')
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://code.highcharts.com/highcharts.js"></script>
 @section('title', 'Dashboard')
 @section('content')
 <div class="page-content">
@@ -70,55 +71,48 @@
 
         <!-- Charts Section -->
         <div class="row">
-            <!-- Document Trends -->
-            <div class="col-12 col-xl-8 mb-4">
+        <div class="col-md-8">
                 <div class="card">
-                    <div class="card-header">
-                        <h4>Document Upload Trends</h4>
-                    </div>
+                    
                     <div class="card-body">
-                        <canvas id="documentTrendsChart"></canvas>
+                        <div id="dailyDocumentsChart" style="height: 400px;"></div>
                     </div>
                 </div>
             </div>
-
-            <!-- Access Level Distribution -->
-            <div class="col-12 col-xl-4 mb-4">
+            <!-- Files by Access Level -->
+            <div class="col-md-4">
                 <div class="card">
-                    <div class="card-header">
-                        <h4>Document Access Levels</h4>
-                    </div>
                     <div class="card-body">
-                        <canvas id="accessLevelChart"></canvas>
+                        <div id="accessLevelChart" style="height: 400px;"></div>
                     </div>
                 </div>
             </div>
-
-            <!-- Department Distribution -->
-            <div class="col-12 col-xl-6 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h4>Documents by Department</h4>
-                    </div>
-                    <div class="card-body">
-                        <canvas id="departmentChart"></canvas>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Geographic Distribution -->
-            <div class="col-12 col-xl-6 mb-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h4>Geographic Distribution</h4>
-                    </div>
-                    <div class="card-body">
-                        <canvas id="geographicChart"></canvas>
-                    </div>
-                </div>
-            </div>
+            <div class="col-md-12">
+    <div class="card">
+        <div class="card-body">
+            <div id="monthlyDocumentsChart" style="height: 400px;"></div>
         </div>
+    </div>
+</div>
 
+
+            <!-- Files by City -->
+<div class="col-md-6">
+    <div class="card">
+        <div class="card-body">
+            <div id="cityChart" style="height: 400px;"></div>
+        </div>
+    </div>
+</div>
+<div class="col-md-6">
+    <div class="card">
+        <div class="card-body">
+            <div id="departmentChart" style="height: 400px;"></div>
+        </div>
+    </div>
+</div>
+
+           
         <!-- Recent Activity Table -->
         <div class="row">
             <div class="col-12">
@@ -158,135 +152,187 @@
 
 
 <script>
-    // Document Trends Chart - Last 6 months
-    const trendsCtx = document.getElementById('documentTrendsChart').getContext('2d');
-    const trendsChart = new Chart(trendsCtx, {
-        type: 'line',
-        data: {
-            labels: {!! json_encode(
-                \App\Models\Document::selectRaw('DATE_FORMAT(created_at, "%Y-%m") as month')
-                    ->groupBy('month')
-                    ->orderBy('month', 'DESC')
-                    ->take(6)
-                    ->pluck('month')
-                    ->reverse()
-            ) !!},
-            datasets: [{
-                label: 'Documents Uploaded',
-                data: {!! json_encode(
-                    \App\Models\Document::selectRaw('DATE_FORMAT(created_at, "%Y-%m") as month, COUNT(*) as count')
-                        ->groupBy('month')
-                        ->orderBy('month', 'DESC')
-                        ->take(6)
-                        ->pluck('count')
-                        ->reverse()
-                ) !!},
-                borderColor: 'rgb(75, 192, 192)',
-                tension: 0.1
-            }]
+
+    Highcharts.chart('accessLevelChart', {
+        chart: {
+            type: 'pie'
         },
-        options: {
-            responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
+        title: {
+            text: 'Files by Access Level'
+        },
+        tooltip: {
+            pointFormat: '{series.name}: <b>{point.percentage:.1f}%</b>'
+        },
+        plotOptions: {
+            pie: {
+                allowPointSelect: true,
+                cursor: 'pointer',
+                dataLabels: {
+                    enabled: true,
+                    format: '<b>{point.name}</b>: {point.y}'
+                },
+                showInLegend: true
             }
-        }
+        },
+        series: [{
+            name: 'Files',
+            colorByPoint: true,
+            data: {!! json_encode($accessLevelData) !!}
+        }]
     });
 
-    // Document Category Distribution
-    const accessCtx = document.getElementById('accessLevelChart').getContext('2d');
-    const accessChart = new Chart(accessCtx, {
-        type: 'doughnut',
-        data: {
-            labels: {!! json_encode(\App\Models\DocumentCategory::pluck('name')) !!},
-            datasets: [{
-                data: {!! json_encode(\App\Models\Document::selectRaw('count(*) as count, document_category_id')
-                    ->groupBy('document_category_id')
-                    ->pluck('count')
-                    ->toArray()) !!},
-                backgroundColor: [
-                    'rgba(255, 99, 132, 0.2)',
-                    'rgba(54, 162, 235, 0.2)',
-                    'rgba(255, 206, 86, 0.2)',
-                    'rgba(75, 192, 192, 0.2)'
-                ],
-                borderColor: [
-                    'rgba(255, 99, 132, 1)',
-                    'rgba(54, 162, 235, 1)',
-                    'rgba(255, 206, 86, 1)',
-                    'rgba(75, 192, 192, 1)'
-                ]
-            }]
+    Highcharts.chart('dailyDocumentsChart', {
+        chart: {
+            type: 'line'
         },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: {
-                    position: 'bottom'
-                }
+        title: {
+            text: 'Documents Uploaded by Day'
+        },
+        subtitle: {
+            text: 'Last 30 Days'
+        },
+        xAxis: {
+            categories: {!! json_encode($dailyLabels) !!},
+            title: {
+                text: 'Date'
             }
+        },
+        yAxis: {
+            title: {
+                text: 'Number of Documents'
+            },
+            min: 0
+        },
+        plotOptions: {
+            line: {
+                dataLabels: {
+                    enabled: true
+                },
+                enableMouseTracking: true
+            }
+        },
+        series: [{
+            name: 'Documents',
+            data: {!! json_encode($dailyData) !!},
+            color: '#4bc0c0'
+        }],
+        responsive: {
+            rules: [{
+                condition: {
+                    maxWidth: 500
+                },
+                chartOptions: {
+                    legend: {
+                        layout: 'horizontal',
+                        align: 'center',
+                        verticalAlign: 'bottom'
+                    }
+                }
+            }]
         }
     });
-
-    // Department Distribution
-    const deptCtx = document.getElementById('departmentChart').getContext('2d');
-    const deptChart = new Chart(deptCtx, {
-        type: 'bar',
-        data: {
-            labels: {!! json_encode(\App\Models\Department::pluck('DepartmentName')) !!},
-            datasets: [{
-                label: 'Number of Documents',
-                data: {!! json_encode(\App\Models\Department::withCount('documents')->pluck('documents_count')) !!},
-                backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                borderColor: 'rgba(54, 162, 235, 1)',
-                borderWidth: 1
-            }]
+    Highcharts.chart('cityChart', {
+        chart: {
+            type: 'pie'
         },
-        options: {
-            responsive: true,
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
+        title: {
+            text: 'Files by City'
+        },
+        tooltip: {
+            pointFormat: '{series.name}: <b>{point.percentage:.1f}%</b>'
+        },
+        plotOptions: {
+            pie: {
+                allowPointSelect: true,
+                cursor: 'pointer',
+                dataLabels: {
+                    enabled: true,
+                    format: '<b>{point.name}</b>: {point.y}'
+                },
+                showInLegend: true
             }
-        }
+        },
+        series: [{
+            name: 'Files',
+            colorByPoint: true,
+            data: {!! json_encode($cityData) !!}
+        }]
     });
-
-    // Geographic Distribution
-    const geoCtx = document.getElementById('geographicChart').getContext('2d');
-    const geoChart = new Chart(geoCtx, {
-        type: 'pie',
-        data: {
-            labels: {!! json_encode(\App\Models\City::pluck('CityName')) !!},
-            datasets: [{
-                data: {!! json_encode(\App\Models\City::withCount('documents')->pluck('documents_count')) !!},
-                backgroundColor: [
-                    'rgba(255, 99, 132, 0.2)',
-                    'rgba(54, 162, 235, 0.2)',
-                    'rgba(255, 206, 86, 0.2)',
-                    'rgba(75, 192, 192, 0.2)',
-                    'rgba(153, 102, 255, 0.2)',
-                    'rgba(255, 159, 64, 0.2)'
-                ],
-                borderColor: [
-                    'rgba(255, 99, 132, 1)',
-                    'rgba(54, 162, 235, 1)',
-                    'rgba(255, 206, 86, 1)',
-                    'rgba(75, 192, 192, 1)',
-                    'rgba(153, 102, 255, 1)',
-                    'rgba(255, 159, 64, 1)'
-                ]
-            }]
+    Highcharts.chart('departmentChart', {
+        chart: {
+            type: 'pie'
         },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: {
-                    position: 'bottom'
-                }
+        title: {
+            text: 'Files by Department'
+        },
+        tooltip: {
+            pointFormat: '{series.name}: <b>{point.percentage:.1f}%</b>'
+        },
+        plotOptions: {
+            pie: {
+                allowPointSelect: true,
+                cursor: 'pointer',
+                dataLabels: {
+                    enabled: true,
+                    format: '<b>{point.name}</b>: {point.y}'
+                },
+                showInLegend: true
             }
+        },
+        series: [{
+            name: 'Files',
+            colorByPoint: true,
+            data: {!! json_encode($departmentChartData) !!}
+        }]
+    });
+    Highcharts.chart('monthlyDocumentsChart', {
+        chart: {
+            type: 'line'
+        },
+        title: {
+            text: 'Documents Uploaded by Month'
+        },
+        subtitle: {
+            text: '{{ now()->year }}'
+        },
+        xAxis: {
+            categories: {!! json_encode($monthlyLabels) !!},
+            title: {
+                text: 'Month'
+            }
+        },
+        yAxis: {
+            title: {
+                text: 'Number of Documents'
+            },
+            min: 0
+        },
+        plotOptions: {
+            line: {
+                dataLabels: {
+                    enabled: true
+                },
+                enableMouseTracking: true
+            }
+        },
+        series: [{
+            name: 'Documents',
+            data: {!! json_encode($monthlyData) !!},
+            color: '#4bc0c0'
+        }],
+        responsive: {
+            rules: [{
+                condition: {
+                    maxWidth: 500
+                },
+                chartOptions: {
+                    legend: {
+                        layout: 'horizontal',
+                        align: 'center',
+                        verticalAlign: 'bottom'
+                    }
+                }
+            }]
         }
     });
 </script>

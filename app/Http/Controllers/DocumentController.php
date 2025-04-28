@@ -17,9 +17,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\File;
-use setasign\Fpdi\Tcpdf\Fpdi;
-use setasign\Fpdi\PdfParser\StreamReader;
-use TCPDF_STATIC;
+use Illuminate\Support\Facades\Session;
 
 class DocumentController extends Controller
 {
@@ -206,7 +204,7 @@ class DocumentController extends Controller
         if ($request->hasFile('file')) {
             // Delete old file
             if (file_exists('uploads/Documents/' . $document->file_path)) {
-                unlink('uploads/Documents/' . $document->file_path);
+                unlink('Uploads/Documents/' . $document->file_path);
             }
 
             $file = $request->file('file');
@@ -241,7 +239,7 @@ class DocumentController extends Controller
             $encryptedContent = base64_encode($iv . $encryptedContent);
 
             // Save encrypted content to file
-            if (file_put_contents('uploads/Documents/' . $filename, $encryptedContent) === false) {
+            if (file_put_contents('Uploads/Documents/' . $filename, $encryptedContent) === false) {
                 return back()->with('error', 'Failed to save encrypted file.');
             }
 
@@ -297,21 +295,69 @@ class DocumentController extends Controller
                 return back()->with('error', 'Invalid access code.');
             }
 
+            // Generate a one-time token for streaming
+            $token = Str::random(40);
+            Session::put('document_stream_token_' . $document->id, $token);
+            Session::save();
+
+            // Create streaming URL
+            $streamUrl = route('documents.stream', ['document' => $document->id, 'token' => $token]);
+
+            // Get MIME type
+            $mimeType = $this->getMimeType($document->file_type);
+
+            // Return view with streaming URL
+            return view('documents.read', [
+                'document' => $document,
+                'streamUrl' => $streamUrl,
+                'mimeType' => $mimeType,
+                'userName' => $user->name
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Document display failed: ' . $e->getMessage());
+            return back()->with('error', 'Failed to display document: ' . $e->getMessage());
+        }
+    }
+
+    public function stream(Request $request, Document $document)
+    {
+        try {
+            $user = Auth::user();
+            if (!$user) {
+                abort(401, 'Unauthorized');
+            }
+
+            if (!$document->isAccessibleToUser($user)) {
+                abort(403, 'You do not have permission to view this document.');
+            }
+
+            // Verify token
+            $token = $request->query('token');
+            $sessionToken = Session::get('document_stream_token_' . $document->id);
+            if (!$token || $token !== $sessionToken) {
+                abort(403, 'Invalid or expired streaming token.');
+            }
+
+            // Remove token after use (one-time access)
+            Session::forget('document_stream_token_' . $document->id);
+            Session::save();
+
             // Read encrypted file content
             $filePath = public_path('uploads/Documents/' . $document->file_path);
             if (!file_exists($filePath)) {
-                return back()->with('error', 'File not found.');
+                abort(404, 'File not found.');
             }
 
             $encryptedContent = file_get_contents($filePath);
             if ($encryptedContent === false) {
-                return back()->with('error', 'Failed to read encrypted file.');
+                abort(500, 'Failed to read encrypted file.');
             }
 
             // Decode base64 content
             $decodedContent = base64_decode($encryptedContent);
             if ($decodedContent === false) {
-                return back()->with('error', 'Failed to decode encrypted file.');
+                abort(500, 'Failed to decode encrypted file.');
             }
 
             // Extract IV (first 16 bytes) and encrypted data
@@ -321,7 +367,7 @@ class DocumentController extends Controller
             // Decrypt encryption key
             $encryptionKey = decrypt($document->encryption_key);
             if ($encryptionKey === false) {
-                return back()->with('error', 'Failed to decrypt encryption key.');
+                abort(500, 'Failed to decrypt encryption key.');
             }
 
             // Decrypt file content
@@ -334,21 +380,14 @@ class DocumentController extends Controller
             );
 
             if ($decryptedContent === false) {
-                return back()->with('error', 'File decryption failed.');
+                abort(500, 'File decryption failed.');
             }
 
             // Get MIME type
             $mimeType = $this->getMimeType($document->file_type);
 
-            // Apply watermark based on file type
-            $watermarkedContent = $this->addWatermark($decryptedContent, $mimeType, $user->name, $document->file_type);
-            if ($watermarkedContent === false) {
-                // Fallback to original content if watermarking fails
-                $watermarkedContent = $decryptedContent;
-            }
-
-            // Return watermarked file (or original if watermarking failed) for inline display
-            return response($watermarkedContent)
+            // Stream the file
+            return response($decryptedContent)
                 ->header('Content-Type', $mimeType)
                 ->header('Content-Disposition', 'inline; filename="' . $document->file_name . '"')
                 ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -356,8 +395,8 @@ class DocumentController extends Controller
                 ->header('Expires', '0');
 
         } catch (\Exception $e) {
-            Log::error('Document display failed: ' . $e->getMessage());
-            return back()->with('error', 'Failed to display document: ' . $e->getMessage());
+            Log::error('Document streaming failed: ' . $e->getMessage());
+            abort(500, 'Failed to stream document: ' . $e->getMessage());
         }
     }
 
@@ -374,104 +413,7 @@ class DocumentController extends Controller
             abort(403, 'You do not have permission to view this document.');
         }
 
-        return $this->show($document);
-    }
-
-    /**
-     * Add watermark to file content based on file type
-     *
-     * @param string $content File content
-     * @param string $mimeType MIME type of the file
-     * @param string $watermarkText Watermark text (user's name)
-     * @param string $fileExtension File extension
-     * @return string|bool Watermarked content or false on failure
-     */
-    private function addWatermark($content, $mimeType, $watermarkText, $fileExtension)
-    {
-        try {
-            if ($mimeType === 'application/pdf') {
-                // Handle PDF watermark
-                $pdf = new Fpdi();
-                try {
-                    $pageCount = $pdf->setSourceFile(StreamReader::createByString($content));
-                } catch (\Exception $e) {
-                    Log::warning('PDF watermarking failed due to unsupported compression: ' . $e->getMessage());
-                    return false; // Return false to use original content
-                }
-
-                for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
-                    $templateId = $pdf->importPage($pageNo);
-                    $size = $pdf->getTemplateSize($templateId);
-                    $pdf->AddPage($size['orientation'], [$size['width'], $size['height']]);
-                    $pdf->useTemplate($templateId);
-
-                    // Set watermark properties
-                    $pdf->SetFont('Helvetica', '', 40);
-                    $pdf->SetTextColor(255, 0, 0);
-                    $pdf->SetAlpha(0.3);
-                    $pdf->Rotate(45);
-                    $pdf->Text($size['width'] / 4, $size['height'] / 2, $watermarkText);
-                    $pdf->Rotate(-45);
-                }
-
-                return $pdf->Output('', 'S');
-            } elseif (in_array($mimeType, ['image/jpeg', 'image/png', 'image/gif'])) {
-                // Handle image watermark
-                $image = imagecreatefromstring($content);
-                if ($image === false) {
-                    Log::error('Failed to create image from content');
-                    return false;
-                }
-
-                // Get image dimensions
-                $width = imagesx($image);
-                $height = imagesy($image);
-
-                // Create watermark text
-                $fontSize = 20;
-                $font = public_path('fonts/arial.ttf'); // Ensure you have a TTF font file in public/fonts/
-                if (!file_exists($font)) {
-                    Log::error('Font file not found: ' . $font);
-                    return false;
-                }
-
-                // Calculate text size
-                $bbox = imagettfbbox($fontSize, 45, $font, $watermarkText);
-                $textWidth = abs($bbox[4] - $bbox[0]);
-                $textHeight = abs($bbox[5] - $bbox[1]);
-
-                // Set watermark position (center, rotated 45 degrees)
-                $x = ($width - $textWidth) / 2;
-                $y = ($height + $textHeight) / 2;
-
-                // Allocate colors
-                $red = imagecolorallocatealpha($image, 255, 0, 0, 50); // Semi-transparent red
-
-                // Add rotated text
-                imagettftext($image, $fontSize, 45, $x, $y, $red, $font, $watermarkText);
-
-                // Output image to string
-                ob_start();
-                if ($mimeType === 'image/jpeg') {
-                    imagejpeg($image, null, 90);
-                } elseif ($mimeType === 'image/png') {
-                    imagepng($image);
-                } elseif ($mimeType === 'image/gif') {
-                    imagegif($image);
-                }
-                $watermarkedContent = ob_get_clean();
-
-                imagedestroy($image);
-                return $watermarkedContent;
-            }
-
-            // Return original content for unsupported file types
-            return $content;
-
-        } catch (\Exception $e) {
-            Log::error('Watermark application failed: ' . $e->getMessage());
-            return false;
-        }
+        return $this->show(new Request(['access_code' => $accessCode]), $document);
     }
 
     /**

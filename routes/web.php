@@ -11,6 +11,8 @@ use App\Http\Controllers\CityController;
 use App\Http\Controllers\DocumentCategoryController;
 use App\Http\Controllers\SubCityController;
 use App\Http\Controllers\ProfileController;
+use Illuminate\Support\Facades\Request;
+use Illuminate\Support\Facades\Session;
 
 Route::get('/', function () {
     return redirect()->route('login');
@@ -24,6 +26,17 @@ Route::get('/home', function () {
     return $user->isAdmin() 
         ? redirect()->route('dashboard')
         : redirect()->route('userdashboard');
+});
+Route::get('/lang', function (Request $request) {
+    $lang = $request->lang;
+
+        if (!in_array($lang, ['en', 'am', 'or'])) {
+            abort(400);
+        }
+
+        Session::put('locale', $lang);
+
+        return redirect()->back();
 });
 
 
@@ -59,6 +72,7 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/documents/{document}', [DocumentController::class, 'show'])->name('documents.show');
     Route::delete('/documents/{id}/download', [DocumentController::class, 'destroy'])->name('documents.destroy');
     Route::resource('document-categories', DocumentCategoryController::class);
+    Route::get('documents/stream/{document}', [DocumentController::class, 'stream'])->name('documents.stream');
 
     Route::resource('users', UserController::class);
     // Route::resource('documents', DocumentController::class);
